@@ -1,10 +1,14 @@
-# Terraform AWS OIDC & KMS Module
+## 🏗️ Landing Zone Ecosystem
 
-This module provides a centralized way to manage AWS OIDC providers for GitHub Actions and shared KMS keys for infrastructure encryption.
+This repository is part of a larger ecosystem:
+- [talos-aws-landing-zone](https://github.com/francesco2323/talos-aws-landing-zone): The primary deployment and orchestration layer.
+- [terraform-aws-talos-modules](https://github.com/francesco2323/terraform-aws-talos-modules): The library of reusable infrastructure components.
+- [terraform-aws-oidc-kms](https://github.com/francesco2323/terraform-aws-oidc-kms): **(Current)** Foundational security and global resources.
 
-## Features
+## 🚀 CI/CD & Quality
 
-- **AWS OIDC Provider**: Secure, keyless authentication for GitHub Actions.
-- **KMS Key**: Multi-purpose symmetric encryption key.
-- **IAM Role**: Standardized service role for CI/CD.
-# terraform-aws-oidc-kms
+Every Pull Request undergoes a standardized security and quality check:
+- **Linting**: TFLint for HCL best practices.
+- **Security**: Trivy for vulnerability scanning.
+- **Quality**: SonarQube for static analysis.
+- **Reporting**: Automated PR summaries for instant feedback.
