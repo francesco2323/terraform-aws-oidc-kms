@@ -1,106 +1,129 @@
 name: "Terraform CI"
 
 on:
-    pull_request:
-        branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
-    id-token: write
-    contents: read
-    pull-requests: write
+  id-token: write
+  contents: read
+  pull-requests: write
 
 jobs:
-    terraform-ci:
-        name: "Standardized CI"
-        runs-on: ubuntu-latest
+  terraform-ci:
+    name: "Hardened CI"
+    runs-on: ubuntu-latest
 
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0 # Required for SonarQube
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-            # --- LINTING (TFLint) ---
-            - name: Setup TFLint
-              uses: terraform-linters/setup-tflint@v3
-              with:
-                  tflint_version: latest
+      # --- LINTING (TFLint) ---
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v3
+        with:
+          tflint_version: latest
 
-            - name: Init TFLint
-              run: tflint --init
+      - name: Init TFLint
+        run: tflint --init
 
-            - name: Run TFLint
-              id: tflint
-              run: |
-                  tflint --format compact > tflint_report.txt || true
-                  cat tflint_report.txt
+      - name: Run TFLint
+        id: tflint
+        run: |
+          echo "### TFLint Report" > tflint_report.txt
+          tflint --format compact >> tflint_report.txt || exit 1
 
-            # --- SECURITY (Trivy) ---
-            - name: Run Trivy Scan
-              uses: aquasecurity/trivy-action@master
-              with:
-                  scan-type: "config"
-                  hide-progress: true
-                  format: "table"
-                  exit-code: "0"
-                  output: "trivy_report.txt"
+      # --- SECURITY (Trivy) ---
+      - name: Run Trivy Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "config"
+          hide-progress: true
+          format: "json"
+          output: "trivy_report.json"
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"
 
-            # --- QUALITY (SonarQube) ---
-            - name: SonarQube Scan
-              uses: sonarsource/sonarqube-scan-action@master
-              env:
-                  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-                  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-              continue-on-error: true
+      # --- QUALITY (SonarQube) ---
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        continue-on-error: true
 
-            # --- TERRAFORM VALIDATE ---
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
-              with:
-                  terraform_version: "1.10.5"
+      # --- TERRAFORM VALIDATE ---
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
 
-            - name: Terraform Init
-              run: terraform init -backend=false
+      - name: Terraform Init
+        run: terraform init -backend=false
 
-            - name: Terraform Validate
-              id: validate
-              run: terraform validate -no-color
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
 
-            # --- PR SUMMARY ---
-            - name: PR Feedback
-              uses: actions/github-script@v7
-              if: github.event_name == 'pull_request'
-              with:
-                  script: |
-                      const fs = require('fs');
-                      const tflintReport = fs.existsSync('tflint_report.txt') ? fs.readFileSync('tflint_report.txt', 'utf8') : 'No issues found';
-                      const trivyReport = fs.existsSync('trivy_report.txt') ? fs.readFileSync('trivy_report.txt', 'utf8') : 'No issues found';
+      # --- PR SUMMARY (Enhanced) ---
+      - name: PR Feedback
+        uses: actions/github-script@v7
+        if: always() && github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
 
-                      const output = `### 🤖 CI/CD Standardized Report
+            // Parse TFLint
+            let tflintOutput = "✅ No linting issues found.";
+            if (fs.existsSync('tflint_report.txt')) {
+              tflintOutput = fs.readFileSync('tflint_report.txt', 'utf8');
+            }
 
-                      #### 🔍 TFLint Status
-                      \`\`\`
-                      ${tflintReport}
-                      \`\`\`
+            // Parse Trivy JSON for better detail
+            let securitySummary = "✅ No Critical/High vulnerabilities found.";
+            let remediations = "";
+            if (fs.existsSync('trivy_report.json')) {
+              const trivyData = JSON.parse(fs.readFileSync('trivy_report.json', 'utf8'));
+              if (trivyData.Results) {
+                let issues = [];
+                trivyData.Results.forEach(res => {
+                  if (res.Misconfigurations) {
+                    res.Misconfigurations.forEach(m => {
+                      issues.push(`- **${m.ID}** (${m.Severity}): ${m.Title}\n  *Solution: ${m.Resolution}* [More info](${m.PrimaryURL})`);
+                    });
+                  }
+                });
+                if (issues.length > 0) {
+                  securitySummary = `❌ Found ${issues.length} security issues.`;
+                  remediations = `#### 🛠️ Security Remediations\n${issues.join('\n')}`;
+                }
+              }
+            }
 
-                      #### 🛡️ Security Scan (Trivy)
-                      <details><summary>Show Trivy Report</summary>
+            const output = `### 🛡️ Hardened CI/CD Report
 
-                      \`\`\`
-                      ${trivyReport}
-                      \`\`\`
+            | Tool | Status |
+            | :--- | :--- |
+            | **TFLint** | ${tflintOutput.includes('❌') || tflintOutput.length > 20 ? '❌ Failed' : '✅ Passed'} |
+            | **Security (Trivy)** | ${remediations ? '❌ Blocked' : '✅ Passed'} |
+            | **Validation** | \`${{ steps.validate.outcome }}\` |
 
-                      </details>
+            #### 🔍 Linting Details
+            \`\`\`
+            ${tflintOutput}
+            \`\`\`
 
-                      #### 🏗️ Terraform Validation
-                      - Outcome: \`${{ steps.validate.outcome }}\`
+            ${remediations}
 
-                      ---
-                      *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            ---
+            *Note: Merge is blocked if Security or Linting status is ❌.*
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
 
-                      github.rest.issues.createComment({
-                        issue_number: context.issue.number,
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        body: output
-                      })
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
